@@ -1,0 +1,24 @@
+column,raw,canonical,notes
+学校種,高校,高等学校,
+学校種,中学高校,高等学校,手入力の場合は文脈で修正可
+subjects,算数,算数・数学,
+subjects,数学,算数・数学,
+subjects,英語,外国語,
+subjects,社会科,社会,
+subjects,使用していない,未選択,カウントしない（QCのみ）
+br_features,URL レコメンド,URLリコメンド,
+br_features,URL リコメンド,URLリコメンド,
+br_features,手書き入力,手書き,
+br_features,ペン入力,手書き,
+br_features,辞書機能,辞書,
+br_features,辞典,辞書,
+br_features,タイマー機能,タイマー,
+br_features,資料や解答例の提示,その他,機能名ではない
+br_features,問題集の解説,その他,機能名ではない
+br_features,使用していない,ほとんど使ったことがない,誤記統一
+lp_features,時間集計,閲覧時間集計,
+lp_features,ストローク分析,ペンストローク分析,
+lp_features,理解度ダッシュボード,理解度チェックダッシュボード,
+lp_features,AI先生,AIエージェント（AI先生・Tammy等）,
+lp_features,Tammy,AIエージェント（AI先生・Tammy等）,
+lp_features,推薦AI,AI推薦,
