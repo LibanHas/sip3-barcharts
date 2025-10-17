@@ -1,25 +1,32 @@
-import re
-
-def _pick(colnames, patterns):
-    for pat in patterns:
-        for c in colnames:
-            if re.search(pat, c):
-                return c
-    return None
+# scripts/sip3_teachers/detect_cols.py
 
 def find(df):
-    cols = list(df.columns)
+    # Exact column names as they appear *after* Step 2 header normalization
+    SCHOOL_NAME = "ご所属をご記入ください(例:●●市立〇〇小学校)"
+    SCHOOL_TYPE = "学校種"
 
-    school_name = _pick(cols, [r"学校名", r"ご所属", r"所属.*学校", r"勤務先"])
-    school_type = _pick(cols, [r"学校種", r"校種"])
-    grade       = _pick(cols, [r"学年"])
-    leaf_duration_cols = [c for c in cols if ("LEAF" in c and "何か月" in c)]
-    multi_select_cols  = [c for c in cols if re.search("複数(選択|回答)", c)]
+    LEAF_DURATION = (
+        "LEAFシステム(BookRoll,分析ツール)を授業・授業外(宿題など)で何か月くらい利用していますか。"
+        "※利用期間がX年Yか月だった場合、「X/Y」というようにスラッシュで区切って、全て半角で入力してください"
+        "(例:1年の場合→1/0、2年3か月の場合→2/3、未使用の場合→0/0)"
+    )
+
+    MULTI_SELECTS = [
+        "LEAFシステム(BookRoll,分析ツール)をどの教科で使用しますか(複数選択可)",
+        "BookRollでよく使う機能を選んでください(複数選択可)",
+        "分析ツール(ログパレ)でよく使う機能を選んでください(複数選択可)",
+    ]
+
+    # Minimal presence checks (raise clear errors if missing)
+    required = [SCHOOL_NAME, SCHOOL_TYPE, LEAF_DURATION, *MULTI_SELECTS]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise KeyError(f"Missing expected columns: {missing}")
 
     return {
-        "school_name": school_name,
-        "school_type": school_type,
-        "grade": grade,
-        "leaf_duration_cols": leaf_duration_cols,
-        "multi_select_cols": multi_select_cols
+        "school_name": SCHOOL_NAME,
+        "school_type": SCHOOL_TYPE,
+        "grade": None,                    # not used for teachers
+        "leaf_duration_cols": [LEAF_DURATION],
+        "multi_select_cols": MULTI_SELECTS,
     }
