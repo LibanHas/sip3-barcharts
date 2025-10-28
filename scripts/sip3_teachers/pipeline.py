@@ -30,8 +30,8 @@ def run():
     df = normalize.blank_to_nan(df)
 
     # 5) School canonicalization
-    df["学校名_canon"] = schools.canonicalize_names(df[cols["school_name"]])
-
+    df["学校名_canon"] = df[cols["school_name"]]
+    
     # 6) 学校種: normalize or infer (then fill unknowns as 不明)
     if cols.get("school_type"):
         df["学校種"] = schools.normalize_school_type(df[cols["school_type"]])
