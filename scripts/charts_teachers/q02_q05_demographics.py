@@ -62,7 +62,7 @@ def _find_col_exact_or_contains(df: pd.DataFrame, exact_jp_list: list[str], cont
     norm_cols = {c: _norm(c) for c in cols}
 
     # 1) exact normalized match (in order)
-    for exact in exact_jp_list or []:
+    for exact in (exact_jp_list or []):
         tgt = _norm(exact)
         for c, nc in norm_cols.items():
             if nc == tgt:
@@ -104,8 +104,8 @@ def _style_axes(ax):
         ax.spines[spine].set_visible(False)
 
 def _bar_vertical_from_series(s: pd.Series, title: str, xlabel: str, ylabel: str, out_png: Path, out_csv: Path):
-    # Save CSV
-    s.to_csv(out_csv, encoding="utf-8", header=["count"])
+    # Save CSV (Japanese header for readability)
+    s.to_csv(out_csv, encoding="utf-8", header=["人数"])
     # Plot
     idx = s.index.astype(str).tolist()
     vals = s.values.astype(float)
@@ -139,8 +139,8 @@ def _bar_vertical_from_series(s: pd.Series, title: str, xlabel: str, ylabel: str
     print(f"[info] wrote {out_csv}")
 
 def _bar_horizontal_from_series(s: pd.Series, title: str, xlabel: str, ylabel: str, out_png: Path, out_csv: Path):
-    # Save CSV
-    s.to_csv(out_csv, encoding="utf-8", header=["count"])
+    # Save CSV (Japanese header for readability)
+    s.to_csv(out_csv, encoding="utf-8", header=["人数"])
     # Plot
     idx = s.index.astype(str).tolist()
     vals = s.values.astype(float)
@@ -177,6 +177,29 @@ def _bar_horizontal_from_series(s: pd.Series, title: str, xlabel: str, ylabel: s
     print(f"[info] wrote {out_png}")
     print(f"[info] wrote {out_csv}")
 
+# ---- NEW: counts helper with uniform missing & safe ordering ----------------
+def _counts_with_missing(
+    df: pd.DataFrame,
+    col: str,
+    *,
+    order: list[str] | None = None,
+    missing_label: str = "未回答",
+) -> pd.Series:
+    if col is None or col not in df.columns:
+        return pd.Series(dtype="int64")
+
+    s = df[col].copy().fillna(missing_label).astype(str)
+    orig_vc = s.value_counts(dropna=False)
+
+    if order:
+        # keep ordered labels (even if zero), THEN append any extras
+        ordered = orig_vc.reindex(order).fillna(0).astype(int)
+        extras  = orig_vc[~orig_vc.index.isin(order)]
+        return pd.concat([ordered, extras])
+    else:
+        return orig_vc
+
+
 # ---- Main -------------------------------------------------------------------
 def main():
     setup()
@@ -201,9 +224,13 @@ def main():
     col_experience = find_col_experience(df)
     col_role       = find_col_role(df)
 
-    # Q2 年齢 — vertical bar
+    # Helpful transparency (prints which columns were matched)
+    print(f"[cols] 年齢: {col_age}, 学校種: {col_schooltype}, 経験年数: {col_experience}, 役職: {col_role}")
+
+    # Q2 年齢 — vertical bar, logical order
     if col_age:
-        s = df[col_age].value_counts(dropna=False).sort_values(ascending=False)
+        age_order = ["10代", "20代", "30代", "40代", "50代", "60代", "70代以上", "未回答"]
+        s = _counts_with_missing(df, col_age, order=age_order, missing_label="未回答")
         _bar_vertical_from_series(
             s,
             title=T_TITLE_AGE,
@@ -213,9 +240,10 @@ def main():
     else:
         print("[warn] Missing column for 年齢")
 
-    # Q3 学校種 — vertical bar
+    # Q3 学校種 — vertical bar, logical order
     if col_schooltype:
-        s = df[col_schooltype].value_counts(dropna=False).sort_values(ascending=False)
+        st_order = ["小", "中", "高", "特別支援", "その他", "未回答"]
+        s = _counts_with_missing(df, col_schooltype, order=st_order, missing_label="未回答")
         _bar_vertical_from_series(
             s,
             title=T_TITLE_SCHOOLTYPE,
@@ -225,21 +253,33 @@ def main():
     else:
         print("[warn] Missing column for 学校種")
 
-    # Q4 教職経験年数 — horizontal bar
+    # Q4 教職経験年数 — horizontal bar, logical order
     if col_experience:
-        s = df[col_experience].value_counts(dropna=False).sort_values(ascending=True)
+        exp_order = [
+            "1年未満",
+            "1年以上5年未満",   # ← include this too (some surveys use this single bin)
+            "5年以上10年未満",
+            "10年以上15年未満",
+            "15年以上20年未満",
+            "20年以上",
+        ]
+        s = _counts_with_missing(df, col_experience, order=exp_order, missing_label="未回答")
+        
         _bar_horizontal_from_series(
-            s,
+            s.iloc[::-1],   # ← reverse so the smallest period appears at the top
             title=T_TITLE_EXPERIENCE,
             xlabel="人数", ylabel="カテゴリ",
             out_png=FN_EXPERIENCE_PNG, out_csv=FN_EXPERIENCE_CSV,
         )
+
+        
     else:
         print("[warn] Missing column for 教職経験年数")
 
-    # Q5 役職 — vertical bar
+    # Q5 役職 — vertical bar (no strict order; just include 未回答 at end if present)
     if col_role:
-        s = df[col_role].value_counts(dropna=False).sort_values(ascending=False)
+        role_order = ["教諭","指導教諭","主幹教諭","教務主任","管理職（校長、副校長、教頭など）"]
+        s = _counts_with_missing(df, col_role, order=role_order, missing_label="未回答")
         _bar_vertical_from_series(
             s,
             title=T_TITLE_ROLE,

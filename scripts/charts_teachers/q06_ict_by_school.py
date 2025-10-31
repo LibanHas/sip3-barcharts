@@ -8,6 +8,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
+from matplotlib.patches import Patch
 
 # Project helpers (students style)
 from scripts.common.plotkit import setup  # sets JP font etc.
@@ -22,7 +23,7 @@ OUT_PNG = OUT_DIR / "Q06_ICT頻度__学校別.png"
 OUT_CSV = OUT_DIR / "Q06_ICT頻度__学校別.csv"
 
 # ---- Config / Filters -------------------------------------------------------
-MIN_N  = 1     # keep schools with >= MIN_N ANSWERS to Q6 (not just unique respondent IDs)
+MIN_N  = 1     # keep schools with >= MIN_N answers to Q6
 TOP_N  = 12    # show top-N schools by respondent count (set None to disable)
 
 TITLE        = "授業でのICT活用（学校別・100%積み上げ・教員）"
@@ -30,13 +31,17 @@ X_LABEL      = "割合(%)"
 Y_LABEL      = "学校名"
 LEGEND_TITLE = "頻度"
 
-# Expected answer order (adjust if your survey differs)
+# Expected answer order (high -> low frequency)
 ICT_FREQ_ORDER = [
     "ほぼ毎時間",
     "1週間に数回程度",
     "1ヶ月に数回程度",
     "ほとんど使用していない",
 ]
+
+# ---- Visual policy ----------------------------------------------------------
+SMALL_N_THRESHOLD = 3          # hatch + transparency when n < this
+SORT_BY_CATEGORY  = "ほぼ毎時間"  # sort within n-blocks by this % (desc)
 
 # ---- Normalization & column finders -----------------------------------------
 _PUNCT_RE = re.compile(r"[、。，．・/（）()【】\\[\\]「」『』,:;.-]")
@@ -76,7 +81,7 @@ def find_col_ict_freq(df: pd.DataFrame):
     contains = ["ict", "授業", "活用", "利用頻度", "頻度"]
     return _find_col_exact_or_contains(df, exact, contains)
 
-# ---- Canonicalize schools (REQUIRED) ----------------------------------------
+# ---- Canonicalize schools ---------------------------------------------------
 def ensure_school_canon(df: pd.DataFrame) -> str:
     """
     Use centralized SchoolCanonicalizer to create/ensure a canonical column.
@@ -113,6 +118,23 @@ def make_pct_table(
     pct = pct.fillna(0.0)
     return pct, n
 
+# ---- Colors -----------------------------------------------------------------
+def _category_colors(categories: list[str]) -> dict[str, tuple]:
+    """
+    Darker = more frequent use (semantic mapping).
+    We assign explicit shades by label so the meaning is stable regardless of order.
+    """
+    cmap = plt.cm.Blues
+    shade = {
+        "ほぼ毎時間":        cmap(0.90),  # darkest
+        "1週間に数回程度":    cmap(0.70),
+        "1ヶ月に数回程度":    cmap(0.50),
+        "ほとんど使用していない": cmap(0.30),  # lightest
+        "不明":              (0.70, 0.70, 0.70, 1.0),  # neutral grey if ever shown
+        "その他":            (0.55, 0.55, 0.55, 1.0),
+    }
+    return {c: shade.get(c, cmap(0.40)) for c in categories}
+
 # ---- Plotting ---------------------------------------------------------------
 PLOT_DPI       = 300
 BASE_FONTSIZE  = 12
@@ -135,27 +157,37 @@ def plot_bar_100pct_h(
     out_png: Path,
     out_csv: Path,
 ):
-    # Save CSV (percentages + n)
-    out = pct_df.copy()
+    # Save CSV (percentages rounded + n)
+    out = pct_df.round(1).copy()
     out["n"] = n_per_group
     out.to_csv(out_csv, encoding="utf-8", index=True)
 
-    # Build y labels with n
+    # Labels with n
     base_labels = pct_df.index.tolist()
     y_labels = [f"{lab}（n={int(n_per_group.loc[lab])}）" for lab in base_labels]
 
-    # Figure size scales with number of schools
-    y_count = len(base_labels)
-    fig_h = max(4.0, 0.65 * y_count + 1.2)
-    fig, ax = plt.subplots(figsize=(11.5, fig_h), dpi=PLOT_DPI)
+    # Colors (dark -> light)
+    cat_colors = _category_colors(list(pct_df.columns))
 
-    # Stacked bars
+    # Figure
+    y_count = len(base_labels)
+    fig_h = max(4.6, 0.65 * y_count + 1.8)
+    fig, ax = plt.subplots(figsize=(12.2, fig_h), dpi=PLOT_DPI)
+
+    # Stacked bars with small-N styling
     y_pos = np.arange(y_count)
     left = np.zeros(y_count, dtype=float)
     for col in pct_df.columns:
         vals = pct_df[col].values
-        ax.barh(y_pos, vals, left=left, height=0.6, label=col,
-                zorder=2, edgecolor="white", linewidth=0.5)
+        bars = ax.barh(
+            y_pos, vals, left=left, height=0.6,
+            label=col, color=cat_colors[col],
+            edgecolor="white", linewidth=0.6, zorder=2
+        )
+        for i, b in enumerate(bars):
+            if int(n_per_group.loc[base_labels[i]]) < SMALL_N_THRESHOLD:
+                b.set_hatch("//")
+                b.set_alpha(0.45)
         left += vals
 
     _style_axes(ax)
@@ -163,17 +195,35 @@ def plot_bar_100pct_h(
     ax.set_xlim(0, 100)
     ax.xaxis.set_major_locator(MaxNLocator(6))
     ax.tick_params(axis="x", labelsize=TICK_FONTSIZE)
-    ax.set_xlabel(xlabel, fontsize=LABEL_FONTSIZE)
     ax.set_ylabel(ylabel, fontsize=LABEL_FONTSIZE)
-    ax.set_title(title, fontsize=TITLE_FONTSIZE, pad=12)
+    ax.set_xlabel(f"{xlabel}　（{legend_title}）", fontsize=LABEL_FONTSIZE, labelpad=8)
+    ax.set_title(title, fontsize=TITLE_FONTSIZE, pad=10)
 
-    # Legend (outside, right)
-    leg = ax.legend(title=legend_title, bbox_to_anchor=(1.02, 1.0), loc="upper left",
-                    borderaxespad=0.0, frameon=False, fontsize=BASE_FONTSIZE)
-    if leg and leg.get_title():
-        leg.get_title().set_fontsize(BASE_FONTSIZE)
+    # Reserve a bottom band for legend (top line) + footnote (bottom line)
+    # rect = [left, bottom, right, top] in figure coords
+    plt.tight_layout(rect=[0.02, 0.125, 0.98, 0.90])   # ↓ even smaller bottom margin
 
-    plt.tight_layout()
+    # Legend on its own line between xlabel and footnote
+    handles = [Patch(facecolor=cat_colors[c], edgecolor="none", label=c) for c in pct_df.columns]
+    fig.legend(
+    handles=handles,
+    loc="lower center",
+    ncol=len(handles),
+    frameon=False,
+    fontsize=11,
+    bbox_to_anchor=(0.5, 0.082),  # slightly closer to the x-axis
+    borderaxespad=0.0,
+    handlelength=1.2, handleheight=0.6,
+    columnspacing=0.9, labelspacing=0.35,
+    )
+
+    # Footnote at the very bottom of the reserved band
+    fig.text(
+    0.5, 0.048,
+    "※ ハッチの学校は少数サンプル（n=1）は参考値としてご覧ください。",
+    ha="center", va="center", fontsize=11, color="#555"
+    )
+
     fig.patch.set_facecolor("white")
     fig.savefig(out_png, dpi=PLOT_DPI, bbox_inches="tight")
     plt.close(fig)
@@ -189,10 +239,9 @@ def main():
 
     # Load (avoid FutureWarning by splitting replace/infer)
     df = pd.read_csv(DATA_CLEAN, dtype=str)
-    df = df.replace({"": np.nan})
-    df = df.infer_objects(copy=False)
+    df = df.replace({"": np.nan}).infer_objects(copy=False)
 
-    # --- Canonicalize schools (same as students) ---
+    # Canonicalize schools
     school_col = ensure_school_canon(df)        # e.g., '学校名_canon'
     if school_col != "school_canon":            # mirror to expected name if needed
         df["school_canon"] = df[school_col]
@@ -209,19 +258,10 @@ def main():
 
     # Normalize frequency values and expose explicit '不明' for missing
     vals = df[ict_col].astype(str)
-    # guard cases where the CSV may literally contain "nan" as a string
-    vals = vals.where(vals.str.strip().str.lower().ne("nan"), np.nan)
+    vals = vals.where(vals.str.strip().str.lower().ne("nan"), np.nan)  # guard literal "nan"
     df["_ict"] = vals.fillna("不明").map(lambda s: ud.normalize("NFKC", s).strip())
 
-    # Diagnostics (optional)
-    print("\n[info] answered Q6 by school:")
-    print(
-        df.assign(_has_ans=df['_ict'].ne('不明'))
-        .groupby('school_canon')['_has_ans']
-        .sum().sort_values(ascending=False).to_string()
-    )
-
-    # ---- Filter by number of ANSWERED Q6 responses per school ---------------
+    # Filter by number of ANSWERED Q6 responses per school
     if MIN_N:
         answered = (
             df.assign(_has_ans=df["_ict"].ne("不明"))
@@ -249,7 +289,6 @@ def main():
     cats = list(ICT_FREQ_ORDER)
     if "不明" in df["_ict"].unique() and "不明" not in cats:
         cats.append("不明")
-    # Map unknown labels into 'その他' to avoid exploding the legend
     mapped = df["_ict"].apply(lambda x: x if x in cats else "その他")
     if "その他" in mapped.unique() and "その他" not in cats:
         cats.append("その他")
@@ -258,16 +297,25 @@ def main():
     # Make percentage table (rows=schools, cols=cats)
     pct_df, n_per_group = make_pct_table(df, "school_canon", "_ict_norm", cats)
 
-    # Sort schools by respondent count (desc)
-    if rid_col:
-        order_idx = (
-            df.groupby("school_canon")[rid_col]
-              .nunique()
-              .sort_values(ascending=False)
-              .index
-        )
-        pct_df = pct_df.loc[order_idx]
-        n_per_group = n_per_group.loc[order_idx]
+    # ---- SORTING ----
+    # 「不明」 first (if present), then ascending n (1, 3, 4, 8, ...).
+    # Within each n-block, sort by % of SORT_BY_CATEGORY (desc).
+    sort_col = SORT_BY_CATEGORY if SORT_BY_CATEGORY in pct_df.columns else None
+
+    ordered_blocks: list[list[str]] = []
+    if "不明" in pct_df.index:
+        ordered_blocks.append(["不明"])
+
+    rem_idx = [i for i in pct_df.index if i != "不明"]
+    for n_val in sorted(n_per_group.loc[rem_idx].unique()):
+        block = [i for i in rem_idx if n_per_group.loc[i] == n_val]
+        if sort_col:
+            block = list(pct_df.loc[block].sort_values(sort_col, ascending=False).index)
+        ordered_blocks.append(block)
+
+    final_idx = [i for block in ordered_blocks for i in block]
+    pct_df = pct_df.loc[final_idx]
+    n_per_group = n_per_group.loc[final_idx]
 
     # Plot & write
     plot_bar_100pct_h(
