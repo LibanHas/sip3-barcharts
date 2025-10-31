@@ -135,6 +135,27 @@ def _category_colors(categories: list[str]) -> dict[str, tuple]:
     }
     return {c: shade.get(c, cmap(0.40)) for c in categories}
 
+# ---- Small-N helper ---------------------------------------------------------
+def small_n_dominant_labels(
+    pct_df: pd.DataFrame,
+    n_per_group: pd.Series,
+    threshold: int = SMALL_N_THRESHOLD,
+) -> dict[str, str | None]:
+    """
+    For groups with n < threshold, return the label of the dominant category
+    (ties resolved by idxmax order). Hide '不明' and 'その他'.
+    """
+    labels: dict[str, str | None] = {}
+    for school in pct_df.index:
+        n = int(n_per_group.loc[school])
+        if n < threshold:
+            row = pct_df.loc[school]
+            dom = row.idxmax() if row.max() > 0 else None
+            if dom in (None, "不明", "その他"):
+                dom = None
+            labels[school] = dom
+    return labels
+
 # ---- Plotting ---------------------------------------------------------------
 PLOT_DPI       = 300
 BASE_FONTSIZE  = 12
@@ -156,15 +177,26 @@ def plot_bar_100pct_h(
     legend_title: str,
     out_png: Path,
     out_csv: Path,
+    *,
+    small_n_dom: dict[str, str] | None = None,   # NEW
 ):
+    small_n_dom = small_n_dom or {}
+
     # Save CSV (percentages rounded + n)
     out = pct_df.round(1).copy()
     out["n"] = n_per_group
     out.to_csv(out_csv, encoding="utf-8", index=True)
 
-    # Labels with n
+    # Labels with n (+ dominant category for small-n)
     base_labels = pct_df.index.tolist()
-    y_labels = [f"{lab}（n={int(n_per_group.loc[lab])}）" for lab in base_labels]
+    y_labels: list[str] = []
+    for lab in base_labels:
+        n = int(n_per_group.loc[lab])
+        dom = small_n_dom.get(lab)
+        if n < SMALL_N_THRESHOLD and dom:
+            y_labels.append(f"{lab}（n={n}・{dom}）")
+        else:
+            y_labels.append(f"{lab}（n={n}）")
 
     # Colors (dark -> light)
     cat_colors = _category_colors(list(pct_df.columns))
@@ -200,28 +232,27 @@ def plot_bar_100pct_h(
     ax.set_title(title, fontsize=TITLE_FONTSIZE, pad=10)
 
     # Reserve a bottom band for legend (top line) + footnote (bottom line)
-    # rect = [left, bottom, right, top] in figure coords
-    plt.tight_layout(rect=[0.02, 0.125, 0.98, 0.90])   # ↓ even smaller bottom margin
+    plt.tight_layout(rect=[0.02, 0.125, 0.98, 0.90])
 
     # Legend on its own line between xlabel and footnote
     handles = [Patch(facecolor=cat_colors[c], edgecolor="none", label=c) for c in pct_df.columns]
     fig.legend(
-    handles=handles,
-    loc="lower center",
-    ncol=len(handles),
-    frameon=False,
-    fontsize=11,
-    bbox_to_anchor=(0.5, 0.082),  # slightly closer to the x-axis
-    borderaxespad=0.0,
-    handlelength=1.2, handleheight=0.6,
-    columnspacing=0.9, labelspacing=0.35,
+        handles=handles,
+        loc="lower center",
+        ncol=len(handles),
+        frameon=False,
+        fontsize=11,
+        bbox_to_anchor=(0.5, 0.082),
+        borderaxespad=0.0,
+        handlelength=1.2, handleheight=0.6,
+        columnspacing=0.9, labelspacing=0.35,
     )
 
     # Footnote at the very bottom of the reserved band
     fig.text(
-    0.5, 0.048,
-    "※ ハッチの学校は少数サンプル（n=1）は参考値としてご覧ください。",
-    ha="center", va="center", fontsize=11, color="#555"
+        0.5, 0.048,
+        "※ ハッチの学校は少数サンプル（n=1）は参考値としてご覧ください。",
+        ha="center", va="center", fontsize=11, color="#555"
     )
 
     fig.patch.set_facecolor("white")
@@ -317,6 +348,9 @@ def main():
     pct_df = pct_df.loc[final_idx]
     n_per_group = n_per_group.loc[final_idx]
 
+    # Compute small-n dominant categories (for label augmentation)
+    small_n_dom = small_n_dominant_labels(pct_df, n_per_group, threshold=SMALL_N_THRESHOLD)
+
     # Plot & write
     plot_bar_100pct_h(
         pct_df=pct_df,
@@ -327,6 +361,7 @@ def main():
         legend_title=LEGEND_TITLE,
         out_png=OUT_PNG,
         out_csv=OUT_CSV,
+        small_n_dom=small_n_dom,  # NEW
     )
 
 if __name__ == "__main__":
