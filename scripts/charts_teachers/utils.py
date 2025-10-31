@@ -1,5 +1,4 @@
 # charts/utils.py
-from __future__ import annotations
 from pathlib import Path
 import math
 import matplotlib.pyplot as plt

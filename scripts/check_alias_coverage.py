@@ -91,7 +91,7 @@ def apply_alias_series(s: pd.Series, exact_map: dict, norm_map: dict) -> pd.Seri
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default="data/students_clean.csv")
-    ap.add_argument("--alias", default=None, help="Path to alias_map_students.csv")
+    ap.add_argument("--alias", default=None, help="Path to alias_schools.csv")
     ap.add_argument("--col", default=None, help="Explicit school column header to use")
     args = ap.parse_args()
 
@@ -105,16 +105,16 @@ def main():
         alias_p = Path(args.alias)
     else:
         for p in [
-            Path("config/alias_map_students.csv"),
-            Path("data/alias_map_students.csv"),
-            Path("data/aliases/alias_map_students.csv"),
-            Path("alias_map_students.csv"),
-            Path("scripts/alias_map_students.csv"),
+            Path("config/alias_schools.csv"),
+            Path("data/alias_schools.csv"),
+            Path("data/aliases/alias_schools.csv"),
+            Path("alias_schools.csv"),
+            Path("scripts/alias_schools.csv"),
         ]:
             if p.exists():
                 alias_p = p; break
     if not alias_p or not alias_p.exists():
-        print("[ERROR] alias_map_students.csv not found. Use --alias or place it in config/ or data/."); sys.exit(1)
+        print("[ERROR] alias_schools.csv not found. Use --alias or place it in config/ or data/."); sys.exit(1)
 
     print("[info] data: ", data_p.resolve())
     print("[info] alias:", alias_p.resolve())

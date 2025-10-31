@@ -153,7 +153,6 @@ def _find_grade_canon(df: pd.DataFrame) -> str:
     df["学年_canon"] = "不明"
     return "学年_canon"
 
-# ---- Plotting (shared) ------------------------------------------------------
 def _plot_by_group(
     df: pd.DataFrame,
     group_col: str,
@@ -164,11 +163,11 @@ def _plot_by_group(
     annotate_with_freq: bool = True,
     deemphasize_unknown_label: str = "不明",
 ):
-    # Count respondents with valid duration
+    # Count respondents with valid duration and keep groups with >= min_n
     resp_per_group = df.groupby(group_col)["use_months_total"].apply(lambda s: s.notna().sum())
     ok_groups = resp_per_group[resp_per_group >= min_n].index
 
-    # Aggregate
+    # Aggregate AFTER filtering
     g = (
         df[df[group_col].isin(ok_groups)]
         .groupby(group_col)
@@ -184,7 +183,9 @@ def _plot_by_group(
     g.to_csv(out_csv, encoding="utf-8", index=True)
 
     # Plot prep
-    labels = g.index.tolist()
+    respondents = g["respondents"].astype(int).values
+    base_labels = g.index.tolist()
+    labels = [f"{lab}（n={n}）" for lab, n in zip(base_labels, respondents)]
     y_pos  = np.arange(len(labels))
     x_vals = g["avg_months"].fillna(0.0).values
 
@@ -196,53 +197,77 @@ def _plot_by_group(
     for spine in ["top", "right", "left", "bottom"]:
         ax.spines[spine].set_visible(False)
 
-    bars = ax.barh(y_pos, x_vals, height=0.6, zorder=2, edgecolor="none")
+    # Bars (thin white edge so tiny bars are visible)
+    bars = ax.barh(y_pos, x_vals, height=0.6, zorder=2, edgecolor="white", linewidth=0.5)
 
     # Axes
     ax.set_yticks(y_pos, labels=labels, fontsize=TICK_FONTSIZE)
-
     xmax = float(np.nanmax(x_vals)) if len(x_vals) else 0.0
-    pad  = 0.12 if xmax > 0 else 0.2
-    ax.set_xlim(0, xmax * (1 + pad) + (0.5 if xmax < 6 else 0))
+    pad  = 0.18 if xmax > 0 else 0.25
+    ax.set_xlim(0, xmax * (1 + pad) + (0.6 if xmax < 6 else 0.5))
     ax.xaxis.set_major_locator(MultipleLocator(5) if xmax >= 15 else MaxNLocator(6))
     ax.tick_params(axis="x", labelsize=TICK_FONTSIZE)
     ax.set_xlabel("平均利用期間（月）", fontsize=LABEL_FONTSIZE)
     ax.set_title(title, fontsize=TITLE_FONTSIZE, pad=12)
+    fig.canvas.draw()  # ensure a renderer exists for width measurement
+    def text_width_in_data(ax, text, fontsize=12, fontweight=None):
+        """Return rendered text width in *x data units* for the given Axes."""
+        # make an offscreen Text artist just to measure it
+        t = plt.Text(0, 0, text, fontsize=fontsize, fontweight=fontweight)
+        t.set_figure(ax.figure)
+        t.set_fontfamily(None)  # let your JP font from plotkit apply
+        renderer = ax.figure.canvas.get_renderer()
+        bbox = t.get_window_extent(renderer=renderer)  # width in pixels
 
-    # Annotations
-    for i, (val, f) in enumerate(zip(x_vals, g["avg_freq"].values)):
+        # convert pixel width to data units along x
+        x0_px = ax.transData.transform((0, 0))[0]
+        x1_px = ax.transData.transform((1, 0))[0]
+        px_per_data_x = (x1_px - x0_px) if (x1_px - x0_px) != 0 else 1.0
+        return bbox.width / px_per_data_x
+    # ---- Annotations (bar-driven to avoid ordering mismatch)
+    for i, bar in enumerate(bars):
+        val = bar.get_width()
+        f   = g["avg_freq"].iloc[i]
         if np.isnan(val):
             continue
-        freq_lbl = ""
-        if annotate_with_freq:
-            if (not np.isnan(f)) and f >= 3.5:
-                freq_lbl = "毎時間"
-            elif (not np.isnan(f)) and f >= 2.5:
-                freq_lbl = "週数回"
-            elif (not np.isnan(f)) and f >= 1.5:
-                freq_lbl = "月数回"
-            elif not np.isnan(f):
-                freq_lbl = "ほとんど使用せず"
 
-        if val <= 0 or np.isclose(val, 0.0):
-            if freq_lbl:
-                ax.text(0.3, i, freq_lbl, va="center", ha="left",
-                        color="black", fontsize=BASE_FONTSIZE)
-            continue
+        # build the label
+        freq_lbl = ""
+        if annotate_with_freq and not np.isnan(f):
+            if f >= 3.5:   freq_lbl = "毎時間"
+            elif f >= 2.5: freq_lbl = "週数回"
+            elif f >= 1.5: freq_lbl = "月数回"
+            else:          freq_lbl = "ほとんど使用せず"
 
         text = f"{val:.1f}ヶ月" + (f"｜{freq_lbl}" if freq_lbl else "")
-        inside_threshold = 0.18 * ax.get_xlim()[1]
-        if val >= inside_threshold:
-            ax.text(val - 0.3, i, text, va="center", ha="right",
-                    color="white", fontsize=BASE_FONTSIZE, fontweight="bold")
-        else:
-            ax.text(val + 0.3, i, text, va="center", ha="left",
-                    color="black", fontsize=BASE_FONTSIZE)
 
-    # De-emphasize unknown
+        # measure how long the *actual* rendered text is, in data units
+        tw_data  = text_width_in_data(ax, text, fontsize=BASE_FONTSIZE, fontweight="bold")
+        headroom = 0.8      # small gap to the bar’s right edge when inside
+        min_keep_inside = 0.16 * (ax.get_xlim()[1] - ax.get_xlim()[0])  # very short bars go outside
+        safety = 1.12       # tiny safety multiplier for JP glyph width
+
+        fits_inside = (val >= tw_data * safety + headroom) and (val >= min_keep_inside)
+
+        if val <= 0 or np.isclose(val, 0.0):
+            # no visible bar — just show to the right
+            ax.text(0.8, i, text, va="center", ha="left",
+                    color="black", fontsize=BASE_FONTSIZE, clip_on=False, zorder=5)
+        elif fits_inside:
+            ax.text(val - 0.35, i, text, va="center", ha="right",
+                    color="white", fontsize=BASE_FONTSIZE, fontweight="bold",
+                    clip_on=False, zorder=5)
+        else:
+            ax.text(max(val + 0.45, 0.8), i, text, va="center", ha="left",
+                    color="black", fontsize=BASE_FONTSIZE, clip_on=False, zorder=5)
+
+
+
+
+    # De-emphasize unknown — compare against base_labels (no n=…)
     if deemphasize_unknown_label:
-        for bar, lab in zip(bars, labels):
-            if lab == deemphasize_unknown_label:
+        for bar, base_lab in zip(bars, base_labels):
+            if base_lab == deemphasize_unknown_label:
                 bar.set_alpha(0.45)
 
     plt.tight_layout()
@@ -251,6 +276,8 @@ def _plot_by_group(
     plt.close(fig)
     print(f"[info] wrote {out_png}")
     print(f"[info] wrote {out_csv}")
+
+
 
 # ---- Main -------------------------------------------------------------------
 def main():

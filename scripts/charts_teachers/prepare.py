@@ -10,7 +10,6 @@ Helpers to reshape teacher survey data for plotting.
 - top_n_facets: pick top-N facets by respondent count
 """
 
-from __future__ import annotations
 from typing import Optional, Sequence
 import pandas as pd
 import numpy as np
@@ -131,13 +130,21 @@ def attach_facets(
     df_clean: pd.DataFrame,
     facets: Sequence[str] = ("学校種", "学校名_canon"),
 ) -> pd.DataFrame:
-    """
-    Merge facet columns from clean (wide) into the long table via respondent_id.
-    Keeps original long-table columns.
-    """
     cols = ["respondent_id"] + [f for f in facets if f in df_clean.columns]
     merged = m_long.merge(df_clean[cols], on="respondent_id", how="left")
+
+    # ---- NEW: ensure unknown school shows as "不明" (not NaN/blank)
+    if "学校名_canon" in merged.columns:
+        merged["学校名_canon"] = (
+            merged["学校名_canon"]
+            .astype(str)
+            .str.strip()
+            .replace({"": np.nan, "nan": np.nan, "None": np.nan})
+            .fillna("不明")
+        )
+
     return merged
+
 
 
 def filter_facets_by_min_n(

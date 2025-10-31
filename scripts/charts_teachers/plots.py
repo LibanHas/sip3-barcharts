@@ -46,7 +46,9 @@ def bar_simple(series: pd.Series, title: str, xlabel: str, ylabel: str, outpath:
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     ax.bar_label(ax.containers[0], padding=2)
-    ax.set_xticklabels(ax.get_xticklabels(), rotation=20, ha="right")
+    ax.tick_params(axis="x", labelrotation=20) 
+    for lbl in ax.get_xticklabels():lbl.set_horizontalalignment("right")
+
     _finalize_and_save(fig, outpath)
 
 def bar_horizontal(series: pd.Series, title: str, xlabel: str, ylabel: str, outpath: Path):
@@ -269,7 +271,9 @@ def box_by_facet(
     ax.set_title(title)
     ax.set_xlabel(by)
     ax.set_ylabel(value_col)
-    ax.set_xticklabels(ax.get_xticklabels(), rotation=15, ha="right")
+    ax.tick_params(axis="x", labelrotation=20)
+    for lbl in ax.get_xticklabels():
+        lbl.set_horizontalalignment("right")
     _finalize_and_save(fig, outpath)
 
 

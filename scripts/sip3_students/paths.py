@@ -6,7 +6,7 @@ DATA_DIR = BASE / "data"
 CONFIG_DIR = BASE / "config"
 
 RAW_CSV   = DATA_DIR / "students_raw.csv"
-ALIASES   = CONFIG_DIR / "alias_map_students.csv"
+ALIASES   = CONFIG_DIR / "alias_schools.csv"
 OUT_CSV   = DATA_DIR / "students_clean.csv"
 OUT_MULTI = DATA_DIR / "students_multi_long.csv"
 

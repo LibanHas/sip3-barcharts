@@ -130,7 +130,7 @@ def load_lp_long() -> pd.DataFrame:
 
 # ---- Optional: choice aliasing (merge near-duplicates) ----------------------
 # If you later want to canonicalize LP feature labels, populate this dict
-# (or load from a CSV similar to alias_map_students.csv).
+# (or load from a CSV similar to alias_schools.csv).
 CHOICE_ALIAS = {
     # e.g. "ヒートマップ": "ヒートマップ（閲覧）",
     #      "Heatmap": "ヒートマップ（閲覧）",

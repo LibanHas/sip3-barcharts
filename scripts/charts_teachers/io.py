@@ -1,3 +1,18 @@
+from __future__ import annotations
+
+"""IO helpers for SIP3 charts."""
+# ^ If you prefer, the docstring can also be first, then the future import:
+# """IO helpers for SIP3 charts."""
+# from __future__ import annotations
+
+# Now the rest of your imports:
+from dataclasses import dataclass
+from pathlib import Path
+import json
+import pandas as pd
+# ...etc.
+
+
 # scripts/charts_teachers/io.py
 """
 IO helpers for teacher charts.
@@ -7,8 +22,7 @@ Usage:
     df = io.load_clean()
     m  = io.load_multi()
 """
-
-from __future__ import annotations
+import numpy as np
 from pathlib import Path
 import pandas as pd
 from . import config
@@ -42,6 +56,41 @@ def _strip_all(df: pd.DataFrame) -> pd.DataFrame:
             df[c] = df[c].str.strip()
     return df
 
+def load_clean(columns: list[str] | None = None) -> pd.DataFrame:
+    df = _read_csv(config.TEACHERS_CLEAN)
+    df = _strip_all(df)
+
+    # normalize ID → respondent_id
+    if "respondent_id" not in df.columns:
+        if "ID" in df.columns:
+            df = df.rename(columns={"ID": "respondent_id"})
+        else:
+            raise KeyError(f"'respondent_id' (or 'ID') missing in {config.TEACHERS_CLEAN.name}")
+
+    df["respondent_id"] = df["respondent_id"].astype(str).str.strip()
+
+    # ---- NEW: make blank/NaN school canonical names "不明"
+    if "学校名_canon" in df.columns:
+        df["学校名_canon"] = (
+            df["学校名_canon"]
+            .astype(str)
+            .str.strip()
+            .replace({"": np.nan, "nan": np.nan, "None": np.nan})
+            .fillna("不明")
+        )
+
+    # keep trimming other facets if present
+    for facet in ("学校種",):
+        if facet in df.columns:
+            df[facet] = df[facet].astype(str).str.strip()
+
+    if columns:
+        missing = [c for c in columns if c not in df.columns]
+        if missing:
+            raise KeyError(f"Columns not found in {config.TEACHERS_CLEAN.name}: {missing}")
+        df = df[columns]
+
+    return df
 
 
 
