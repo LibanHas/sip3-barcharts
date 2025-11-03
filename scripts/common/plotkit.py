@@ -10,10 +10,14 @@ import seaborn as sns
 __all__ = ["setup", "grouped_hbar", "sns", "plt"]
 
 _JP_FONT_CANDIDATES = [
-    "Noto Sans CJK JP", "Noto Sans JP",
-    "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Hiragino Maru Gothic ProN",
+    # Windows
+    "Meiryo", "Yu Gothic", "MS Gothic",
+    # Google / IPA / macOS
+    "Noto Sans JP", "Noto Serif JP", "Noto Sans CJK JP",
     "IPAexGothic", "IPAGothic",
+    "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Hiragino Maru Gothic ProN",
 ]
+
 
 def _pick_japanese_font(candidates=None):
     available = {f.name for f in font_manager.fontManager.ttflist}
