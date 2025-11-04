@@ -1,3 +1,4 @@
+# scripts/charts_teachers/q08_bookroll_features_by_school.py
 # Usage:
 #   python3 -m scripts.charts_teachers.q08_bookroll_features_by_school
 from __future__ import annotations
@@ -50,7 +51,10 @@ TOP_N          = None  # or an int to truncate by n label (desc)
 TITLE  = "BookRollでよく使う機能（学校別・教員）"
 X_LAB  = "割合(%)"
 Y_LAB  = "学校名"
-FOOTNOTE = "分母＝各学校で当該設問（複数選択）に何らか回答した人数／ 小規模校も表示（n≥1）"
+
+# NEW: make the color encode “% × n weight”
+WEIGHT_BY_N = True  # <- toggle to False if you want pure % coloring
+FOOTNOTE = "色＝割合×人数の重み付け（各校の人数/最大人数）。文字ラベルは素の割合(%)。"
 
 # Heatmap color (same scarlet family as Q6)
 CMAP = LinearSegmentedColormap.from_list(
@@ -65,7 +69,6 @@ FEATURES = [
 ]
 
 FEATURE_LABELS: Dict[str, str] = {
-    # if you want to shorten labels on x-axis, map here (else they fall back to key)
     "URLリコメンド": "URL\nリコメンド",
     "ほとんど使ったことがない": "ほとんど\n使ったことがない",
 }
@@ -81,7 +84,7 @@ CANON_FEATS: Dict[str, str] = {
     "タイマー": "タイマー",
     "その他": "その他",
     "ほとんど使ったことがない": "ほとんど使ったことがない",
-    # common alternates
+    # alternates
     "テスト": "クイズ",
     "小テスト": "クイズ",
     "リンク推薦": "URLリコメンド",
@@ -117,7 +120,7 @@ def find_col_respondent_id(df: pd.DataFrame) -> Optional[str]:
             return c
     return None
 
-# ---- Parsing (robust to trailing separators like 'マーカー;') ----------------
+# ---- Parsing ---------------------------------------------------------------
 SEP_RE = re.compile(r"[;；、,／/・]|(?:\s+\+\s+)|\s+")
 
 def _clean_token(t: str) -> str:
@@ -133,14 +136,11 @@ def parse_multiselect(series: pd.Series) -> List[List[str]]:
         if not s:
             out.append([])
             continue
-
-        # NEW: capture "TOKEN;;;;" -> ["TOKEN"]
         m_one = re.match(r"^\s*([^\s;；、,/／・]+?)\s*[;；、,/／・]+\s*$", s)
         if m_one:
             parts = [_clean_token(m_one.group(1))]
         else:
             parts = [p for p in (_clean_token(p) for p in SEP_RE.split(s)) if p]
-
         if not parts:
             # keyword scan fallback
             kw = list(CANON_FEATS.keys())
@@ -149,10 +149,8 @@ def parse_multiselect(series: pd.Series) -> List[List[str]]:
                 if k in s and k not in found:
                     found.append(k)
             parts = found
-
         if not parts and _clean_token(s):
             parts = ["その他"]
-
         out.append(parts)
     return out
 
@@ -164,7 +162,6 @@ def canon_feature(token: str) -> Optional[str]:
         return None
     if t in CANON_FEATS:
         return CANON_FEATS[t]
-    # contains guards
     if "URL" in t or "リコメンド" in t:
         return "URLリコメンド"
     if "テスト" in t:
@@ -191,43 +188,52 @@ def _load_order() -> Optional[List[str]]:
     except Exception:
         return None
 
-def _reindex_like(g: pd.DataFrame, order: Optional[List[str]]) -> pd.DataFrame:
-    if not order:
-        return g
-    in_order = [idx for idx in order if idx in g.index]
-    extras   = [idx for idx in g.index if idx not in set(order)]
-    return g.reindex(in_order + extras)
-
 def _find_or_make_rid(df: pd.DataFrame) -> str:
     rid = find_col_respondent_id(df)
     if rid:
         return rid
-    # fallback synthetic id so counts still work
     df.reset_index(drop=False, inplace=True)
     df.rename(columns={"index": "_row_id"}, inplace=True)
     return "_row_id"
 
 # ---- Plotting ---------------------------------------------------------------
-def plot_heatmap(pct_df: pd.DataFrame, n_label: pd.Series, title: str, out_png: Path):
+def plot_heatmap(
+    pct_df: pd.DataFrame,
+    n_label: pd.Series,
+    title: str,
+    out_png: Path,
+    weight_by_n: bool = True,
+):
     rows = pct_df.index.tolist()
     cols = FEATURES
-    M = pct_df.reindex(columns=cols, fill_value=0.0).values
+
+    # Matrix for text labels: raw percentages
+    M_pct = pct_df.reindex(columns=cols, fill_value=0.0).values  # 0..100
+
+    # Matrix for color: optionally weight by n / n_max
+    if weight_by_n and len(n_label) > 0:
+        w = (n_label / n_label.max()).values[:, None]  # (R,1) in [0..1]
+        M_color = M_pct * w
+        cbar_label = "重み付き割合(%)"
+    else:
+        M_color = M_pct
+        cbar_label = "割合(%)"
 
     fig_w = max(12.0, 0.90 * len(cols) + 3.6)
     fig_h = max(6.0, 0.46 * len(rows) + 2.6)
     fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=PLOT_DPI)
 
     im = ax.imshow(
-        M, aspect="auto", origin="upper",
+        M_color, aspect="auto", origin="upper",
         vmin=0, vmax=100, cmap=CMAP, interpolation="bicubic"
     )
 
-    # x labels (wrap certain labels)
+    # x labels
     xlabels = [FEATURE_LABELS.get(c, c) for c in cols]
     ax.set_xticks(np.arange(len(cols)), labels=xlabels, fontsize=TICK_FONTSIZE)
     ax.tick_params(axis="x", pad=6)
 
-    # y labels with n from ALL respondents (Q7-style)
+    # y labels with n
     ylabels = [f"{r}（n={int(n_label.loc[r])}）" for r in rows]
     ax.set_yticks(np.arange(len(rows)), labels=ylabels, fontsize=TICK_FONTSIZE)
 
@@ -238,14 +244,14 @@ def plot_heatmap(pct_df: pd.DataFrame, n_label: pd.Series, title: str, out_png: 
         ax.spines[side].set_color((0,0,0,0.35))
 
     cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-    cbar.set_label("割合(%)", fontsize=LABEL_FONTSIZE)
+    cbar.set_label(cbar_label, fontsize=LABEL_FONTSIZE)
 
-    # annotate cells >= threshold
-    for i in range(M.shape[0]):
-        for j in range(M.shape[1]):
-            v = float(M[i, j])
+    # annotate visible % (raw, not weighted)
+    for i in range(M_pct.shape[0]):
+        for j in range(M_pct.shape[1]):
+            v = float(M_pct[i, j])
             if v >= ANNOTATE_GT:
-                txt_color = "white" if v >= 60 else "black"
+                txt_color = "white" if (M_color[i, j] >= 60) else "black"
                 outline = "black" if txt_color == "white" else "white"
                 ax.text(
                     j, i, f"{v:.0f}%",
@@ -257,7 +263,8 @@ def plot_heatmap(pct_df: pd.DataFrame, n_label: pd.Series, title: str, out_png: 
 
     ax.set_xlabel("BookRoll機能（複数選択）", fontsize=LABEL_FONTSIZE)
     ax.set_title(title, fontsize=TITLE_FONTSIZE, pad=10)
-    fig.text(0.01, -0.02, FOOTNOTE, ha="left", va="top", fontsize=10)
+    if WEIGHT_BY_N:
+        fig.text(0.01, -0.02, FOOTNOTE, ha="left", va="top", fontsize=10)
 
     plt.tight_layout(rect=[0, 0.20, 1, 1])
     fig.patch.set_facecolor("white")
@@ -296,7 +303,7 @@ def main():
     lists_canon = [[canon_feature(x) for x in row] for row in lists_raw]
     lists_canon = [[x for x in row if x] for row in lists_canon]
 
-    # Debug dump (what *this* script saw)
+    # Debug dump
     dbg = pd.DataFrame({
         "school_canon": df["school_canon"],
         rid_col: df[rid_col],
@@ -307,14 +314,14 @@ def main():
     dbg.to_csv(DBG_CSV, index=False, encoding="utf-8")
     print(f"[DEBUG] wrote row-level debug: {DBG_CSV}")
 
-    # 1) n label (Q7-style): DISTINCT respondents per school (regardless of Q8 answer)
+    # n label (distinct respondents per school, regardless of Q8)
     n_label = (
         df.groupby("school_canon")[rid_col]
           .nunique()
           .astype(int)
     )
 
-    # 2) Q8 responders: responded to Q8 at least with one feature (for percentages)
+    # Q8 responders: responded to Q8 with >=1 feature (for percentages)
     responders_q8 = (
         pd.Series([len(v) > 0 for v in lists_canon])
           .groupby(df["school_canon"])
@@ -322,7 +329,7 @@ def main():
           .astype(int)
     )
 
-    # Keep at least MIN_N_LABEL respondents in labels
+    # keep labels with >= MIN_N_LABEL
     n_label = n_label[n_label >= MIN_N_LABEL].sort_values(ascending=False)
 
     # Optional TOP_N
@@ -334,7 +341,8 @@ def main():
     if order:
         n_label = n_label.reindex(order).dropna().astype(int)
 
-        desired = [
+    # If you want a manual fall-back order, keep this block (safe no-op otherwise)
+    desired = [
         "西京高等学校付属中学校",
         "洗足学園高等学校",
         "西賀茂中学校",
@@ -343,7 +351,6 @@ def main():
         "明徳小学校",
         "不明",
     ]
-    # keep only those present; append any extras not listed at the end
     present = [s for s in desired if s in n_label.index]
     extras  = [s for s in n_label.index if s not in desired]
     n_label = n_label.reindex(present + extras)
@@ -374,8 +381,14 @@ def main():
     out.to_csv(OUT_CSV, encoding="utf-8")
     print(f"[info] wrote {OUT_CSV}")
 
-    # Plot heatmap
-    plot_heatmap(pct_df=pct, n_label=n_label, title=TITLE, out_png=OUT_PNG)
+    # Plot heatmap (color = % × n weight; labels show raw %)
+    plot_heatmap(
+        pct_df=pct,
+        n_label=n_label,
+        title=TITLE,
+        out_png=OUT_PNG,
+        weight_by_n=WEIGHT_BY_N,
+    )
 
 if __name__ == "__main__":
     main()

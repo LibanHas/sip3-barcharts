@@ -13,6 +13,7 @@ __all__ = [
     "apply_aliases",
     "SchoolCanonicalizer",
     "post_disambiguate_middle_vs_high",
+    "post_disambiguate_students_by_grade",  # <-- NEW
 ]
 
 # -------------------- Single alias source ------------------------------------
@@ -328,3 +329,46 @@ def post_disambiguate_middle_vs_high(df: pd.DataFrame) -> None:
     is_senzoku = df["school_canon"].eq("洗足学園中学校")
     to_hs = is_senzoku & typ.str.contains(r"^高", na=False)
     df.loc[to_hs, "school_canon"] = "洗足学園高等学校"
+
+
+# -------------------- Students: disambiguate using grade ---------------------
+def _find_grade_col(df: pd.DataFrame) -> Optional[str]:
+    """Best-effort finder for the students' grade column (prefers headers containing '学年')."""
+    for c in df.columns:
+        if isinstance(c, str) and "学年" in c:
+            return c
+    return None
+
+
+def post_disambiguate_students_by_grade(df: pd.DataFrame, grade_col: Optional[str] = None) -> None:
+    """
+    Students dataset: resolve ambiguous school labels using the *grade* answer.
+
+    - If school_canon is a High School but grade says '中学校*年生', demote to its JHS.
+    - If school_canon is a Junior High but grade says '高校*年生', promote to its HS.
+
+    Handles:
+      - 西京高等学校  <->  西京高等学校付属中学校
+      - 洗足学園高等学校 <-> 洗足学園中学校
+    """
+    if "school_canon" not in df.columns:
+        return
+
+    if grade_col is None:
+        grade_col = _find_grade_col(df)
+    if not grade_col or grade_col not in df.columns:
+        return
+
+    g = df[grade_col].astype(str)
+
+    # Nishikyo pair
+    to_jhs = df["school_canon"].eq("西京高等学校") & g.str.startswith("中学校", na=False)
+    to_hs  = df["school_canon"].eq("西京高等学校付属中学校") & g.str.startswith("高校", na=False)
+    df.loc[to_jhs, "school_canon"] = "西京高等学校付属中学校"
+    df.loc[to_hs,  "school_canon"] = "西京高等学校"
+
+    # Senzoku pair
+    to_jhs2 = df["school_canon"].eq("洗足学園高等学校") & g.str.startswith("中学校", na=False)
+    to_hs2  = df["school_canon"].eq("洗足学園中学校") & g.str.startswith("高校", na=False)
+    df.loc[to_jhs2, "school_canon"] = "洗足学園中学校"
+    df.loc[to_hs2,  "school_canon"] = "洗足学園高等学校"

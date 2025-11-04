@@ -1,8 +1,9 @@
+# scripts/charts_teachers/q21to30_likert_heatmap_by_school.py
 # Usage:
 #   python3 -m scripts.charts_teachers.q21to30_likert_heatmap_by_school
 from __future__ import annotations
 from pathlib import Path
-from typing import List, Optional, Tuple, Dict
+from typing import List, Optional, Tuple
 import re
 import unicodedata as ud
 
@@ -30,9 +31,10 @@ OUT_DIR    = Path("figs/teachers/likert_by_school")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ---- Config -----------------------------------------------------------------
-MIN_N       = 1        # keep all schools that have >= MIN_N answers to the specific question
-TOP_N       = 20       # show top-N schools by respondent count (None to disable)
-ANNOTATE_GT = 10.0     # annotate cells >= this % with "xx%"
+MIN_N        = 1        # keep schools with >= MIN_N answers to the specific question
+TOP_N        = 20       # show top-N schools by respondent count (None to disable)
+ANNOTATE_GT  = 10.0     # annotate cells >= this % with "xx%" (hide tiny labels)
+WEIGHT_BY_N  = True     # <<< color intensity uses (% * n / max_n) like Q12–Q20
 
 PLOT_DPI       = 300
 BASE_FONTSIZE  = 12
@@ -55,7 +57,8 @@ DISPLAY_ALIASES = {
     "使っていない": "使って\nいない",
 }
 
-FOOTNOTE = "分母＝各学校で当該設問に回答（1つ選択）した人数／ 小規模校も表示（n≥1）"
+FOOTNOTE_BASE = "分母＝各学校で当該設問に回答（1つ選択）した人数／ 小規模校も表示（n≥1）"
+FOOTNOTE_WEIGHTED = "色＝割合×人数の重み付け（各校の人数/最大人数）。文字ラベルは素の割合(%)。"
 
 # ---- Color map (scarlet gradient) -------------------------------------------
 CMAP = LinearSegmentedColormap.from_list(
@@ -71,7 +74,6 @@ CMAP = LinearSegmentedColormap.from_list(
 )
 
 # ---- Q21–Q30 specs ----------------------------------------------------------
-# exact Japanese prompts (for “exact match”); also provide token fallbacks
 QUESTION_SPECS: List[Tuple[str, str, List[str]]] = [
     ("Q21", "児童生徒の理解度が高まったと感じる", ["理解度", "高まった"]),
     ("Q22", "授業準備時間が短縮した", ["授業準備", "短縮"]),
@@ -95,12 +97,10 @@ def _norm(s: str) -> str:
     return s.lower()
 
 def find_col_likert(df: pd.DataFrame, exact_jp: str, tokens: List[str]) -> Optional[str]:
-    # exact match first
     tgt = _norm(exact_jp)
     for c in df.columns:
         if _norm(c) == tgt:
             return c
-    # fallback: all tokens contained
     toks = [_norm(t) for t in tokens]
     for c in df.columns:
         nc = _norm(c)
@@ -113,7 +113,6 @@ def canon_likert(s: str) -> Optional[str]:
     if s is None or (isinstance(s, float) and np.isnan(s)):
         return None
     t = ud.normalize("NFKC", str(s)).strip()
-    # tolerant contains checks
     if "使" in t and "ない" in t:
         return "使っていない"
     if "あてはまらない" in t:
@@ -124,7 +123,6 @@ def canon_likert(s: str) -> Optional[str]:
         return "少しあてはまる"
     if "あてはまる" in t:
         return "あてはまる"
-    # otherwise missing/other → None (excluded from pct denominator)
     return None
 
 def wrap_jp(s: str, width: int = 6) -> str:
@@ -141,14 +139,27 @@ def plot_heatmap_full(
 ):
     rows = pct_df.index.tolist()
     cols = LIKERT_ORDER
-    M = pct_df.reindex(columns=cols, fill_value=0.0).values
+
+    # Matrix for text (raw %)
+    M_pct = pct_df.reindex(columns=cols, fill_value=0.0).values
+
+    # Matrix for color (weighted or not)
+    if WEIGHT_BY_N and len(n_per_school) > 0:
+        weights = (n_per_school / n_per_school.max()).values[:, None]  # (schools x 1)
+        M_color = M_pct * weights
+        cbar_label = "重み付き割合(%)"
+        footnote = FOOTNOTE_WEIGHTED
+    else:
+        M_color = M_pct
+        cbar_label = "割合(%)"
+        footnote = FOOTNOTE_BASE
 
     fig_w = max(12.0, 0.90 * len(cols) + 3.6)
     fig_h = max(6.0, 0.46 * len(rows) + 2.6)
     fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=PLOT_DPI)
 
     im = ax.imshow(
-        M,
+        M_color,
         aspect="auto",
         origin="upper",
         vmin=0, vmax=100,
@@ -173,14 +184,14 @@ def plot_heatmap_full(
 
     # colorbar
     cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-    cbar.set_label("割合(%)", fontsize=LABEL_FONTSIZE)
+    cbar.set_label(cbar_label, fontsize=LABEL_FONTSIZE)
 
-    # annotate cells
-    for i in range(M.shape[0]):
-        for j in range(M.shape[1]):
-            v = float(M[i, j])
+    # annotate cells (show raw %; hide < ANNOTATE_GT)
+    for i in range(M_pct.shape[0]):
+        for j in range(M_pct.shape[1]):
+            v = float(M_pct[i, j])
             if v >= annotate_gt:
-                txt_color = "white" if v >= 60 else "black"
+                txt_color = "white" if M_color[i, j] >= 60 else "black"
                 outline = "black" if txt_color == "white" else "white"
                 ax.text(
                     j, i, f"{v:.0f}%",
@@ -192,7 +203,7 @@ def plot_heatmap_full(
 
     ax.set_xlabel(x_label, fontsize=LABEL_FONTSIZE)
     ax.set_title(title, fontsize=TITLE_FONTSIZE, pad=10)
-    fig.text(0.01, -0.02, FOOTNOTE, ha="left", va="top", fontsize=10)
+    fig.text(0.01, -0.02, footnote, ha="left", va="top", fontsize=10)
 
     plt.tight_layout(rect=[0, 0.14, 1, 1])
     fig.patch.set_facecolor("white")
@@ -208,15 +219,25 @@ def plot_heatmap_top2(
 ):
     # Single-column heatmap (Top-2%)
     rows = top2_pct.index.tolist()
-    cols = ["Top2使用率(%)"]
-    M = top2_pct.values.reshape(-1, 1)
+    M_pct = top2_pct.values.reshape(-1, 1)
+
+    # Weighted color (keep labels as raw %)
+    if WEIGHT_BY_N and len(n_per_school) > 0:
+        weights = (n_per_school / n_per_school.max()).values.reshape(-1, 1)
+        M_color = M_pct * weights
+        cbar_label = "重み付き割合(%)"
+        footnote = FOOTNOTE_WEIGHTED + "／ Top2＝『あてはまる＋少しあてはまる』"
+    else:
+        M_color = M_pct
+        cbar_label = "割合(%)"
+        footnote = FOOTNOTE_BASE + "／ Top2＝『あてはまる＋少しあてはまる』"
 
     fig_w = 7.2
     fig_h = max(6.0, 0.46 * len(rows) + 2.6)
     fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=PLOT_DPI)
 
     im = ax.imshow(
-        M,
+        M_color,
         aspect="auto",
         origin="upper",
         vmin=0, vmax=100,
@@ -235,11 +256,11 @@ def plot_heatmap_top2(
         ax.spines[side].set_color((0,0,0,0.35))
 
     cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-    cbar.set_label("割合(%)", fontsize=LABEL_FONTSIZE)
+    cbar.set_label(cbar_label, fontsize=LABEL_FONTSIZE)
 
     # annotate (always show)
-    for i, v in enumerate(M.ravel()):
-        txt_color = "white" if v >= 60 else "black"
+    for i, v in enumerate(M_pct.ravel()):
+        txt_color = "white" if M_color[i, 0] >= 60 else "black"
         outline = "black" if txt_color == "white" else "white"
         ax.text(
             0, i, f"{v:.0f}%",
@@ -250,7 +271,7 @@ def plot_heatmap_top2(
         )
 
     ax.set_title(title + " — 学校別", fontsize=TITLE_FONTSIZE, pad=10)
-    fig.text(0.01, -0.02, FOOTNOTE + "／ Top2＝『あてはまる＋少しあてはまる』", ha="left", va="top", fontsize=10)
+    fig.text(0.01, -0.02, footnote, ha="left", va="top", fontsize=10)
 
     plt.tight_layout(rect=[0, 0.10, 1, 1])
     fig.patch.set_facecolor("white")
@@ -329,7 +350,7 @@ def main():
         pct_out.to_csv(out_csv, encoding="utf-8")
         print(f"[info] wrote {out_csv}")
 
-        # Plot full 5-option heatmap
+        # Plot full 5-option heatmap (weighted color, raw % labels)
         title = f"{qtext}（学校別・教員）"
         out_png = OUT_DIR / f"{qcode}_5分岐__学校別_heatmap.png"
         plot_heatmap_full(
@@ -340,7 +361,7 @@ def main():
             out_png=out_png,
         )
 
-        # Top-2 (あてはまる＋少しあてはまる)
+        # Top-2 (あてはまる＋少しあてはまる) — also weighted color
         top2 = (pct["あてはまる"].fillna(0.0) + pct["少しあてはまる"].fillna(0.0)).round(1)
         out_csv2 = OUT_DIR / f"{qcode}_Top2_学校別.csv"
         top2_out = pd.DataFrame({"Top2(%)": top2, "n": keep})

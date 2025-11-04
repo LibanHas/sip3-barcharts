@@ -1,3 +1,4 @@
+# scripts/charts_teachers/q12to20_likert_heatmap_by_school.py
 # Usage:
 #   python3 -m scripts.charts_teachers.q12to20_likert_heatmap_by_school
 from __future__ import annotations
@@ -31,8 +32,11 @@ OUT_DIR    = Path("figs/teachers/likert_by_school")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ---- Config ---------------------------------------------------------
-MIN_N       = 1      # include schools with 1+ answers
-TOP_N       = None   # keep all; set to a number to cap rows
+MIN_N          = 1    # include schools with 1+ answers
+TOP_N          = None # keep all; set to a number to cap rows
+WEIGHT_BY_N    = True # <<< color intensity uses (% * n / max_n)
+ANNOTATE_GT    = 10.0 # set to a number (e.g., 10.0) if you want to hide tiny labels
+
 PLOT_DPI       = 300
 BASE_FONTSIZE  = 12
 TITLE_FONTSIZE = 16
@@ -136,14 +140,27 @@ def plot_heatmap_likert(title_left: str, pct_df: pd.DataFrame, n_by_school: pd.S
 
     rows = pct_df.index.tolist()
     cols = LIKERT
-    M = pct_df.reindex(columns=cols, fill_value=0.0).values
+
+    # Matrix for text (raw %)
+    M_pct = pct_df.reindex(columns=cols, fill_value=0.0).values
+
+    # Matrix for color (weighted or not)
+    if WEIGHT_BY_N and len(n_by_school) > 0:
+        weights = (n_by_school / n_by_school.max()).values[:, None]  # (schools x 1)
+        M_color = M_pct * weights
+        cbar_label = "重み付き割合(%)"
+        footnote = "色＝割合×人数の重み付け（各校の人数/最大人数）。文字ラベルは素の割合(%)。"
+    else:
+        M_color = M_pct
+        cbar_label = "割合(%)"
+        footnote = "分母＝各学校で当該設問に回答（1つ選択）した人数／ 小規模校も表示（n≥1）"
 
     fig_w = max(11.5, 0.85 * len(cols) + 3.8)
     fig_h = max(6.0, 0.46 * len(rows) + 2.8)
     fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=PLOT_DPI)
 
     im = ax.imshow(
-        M, aspect="auto", origin="upper",
+        M_color, aspect="auto", origin="upper",
         vmin=0, vmax=100, cmap=CMAP, interpolation="bicubic"
     )
 
@@ -161,23 +178,23 @@ def plot_heatmap_likert(title_left: str, pct_df: pd.DataFrame, n_by_school: pd.S
 
     # Colorbar
     cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-    cbar.set_label("割合(%)", fontsize=LABEL_FONTSIZE)
+    cbar.set_label(cbar_label, fontsize=LABEL_FONTSIZE)
 
-    # Annotate every cell with % (legible on both light/dark)
-    for i in range(M.shape[0]):
-        for j in range(M.shape[1]):
-            v = float(M[i, j])
-            ink = "white" if v >= 60 else "black"
-            outline = "black" if ink == "white" else "white"
-            ax.text(j, i, f"{v:.0f}%", ha="center", va="center",
-                    fontsize=BASE_FONTSIZE-1, color=ink,
-                    weight="bold" if v >= 80 else None,
-                    path_effects=[pe.withStroke(linewidth=2, foreground=outline, alpha=0.9)])
+    # Annotate cells with raw % (switchable threshold)
+    for i in range(M_pct.shape[0]):
+        for j in range(M_pct.shape[1]):
+            v = float(M_pct[i, j])
+            if (ANNOTATE_GT is None) or (v >= ANNOTATE_GT):
+                # choose text color based on the WEIGHTED background for readability
+                ink = "white" if (M_color[i, j] >= 60) else "black"
+                outline = "black" if ink == "white" else "white"
+                ax.text(j, i, f"{v:.0f}%", ha="center", va="center",
+                        fontsize=BASE_FONTSIZE-1, color=ink,
+                        weight="bold" if v >= 80 else None,
+                        path_effects=[pe.withStroke(linewidth=2, foreground=outline, alpha=0.9)])
 
     ax.set_title(f"{title_left}  — 学校別（5段階）", fontsize=TITLE_FONTSIZE, pad=10)
-    fig.text(0.01, -0.02,
-             "分母＝各学校で当該設問に回答（1つ選択）した人数／ 小規模校も表示（n≥1）",
-             ha="left", va="top", fontsize=10)
+    fig.text(0.01, -0.02, footnote, ha="left", va="top", fontsize=10)
 
     plt.tight_layout(rect=[0, 0.12, 1, 1])  # extra bottom room for wrapped x-labels
     fig.patch.set_facecolor("white")

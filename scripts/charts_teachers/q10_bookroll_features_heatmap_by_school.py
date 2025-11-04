@@ -1,3 +1,4 @@
+# scripts/charts_teachers/q10_bookroll_features_heatmap_by_school.py
 # Usage:
 #   python3 -m scripts.charts_teachers.q10_bookroll_features_heatmap_by_school
 from __future__ import annotations
@@ -37,17 +38,19 @@ MIN_N       = 1      # minimum respondents in a school who ANSWERED Q10 to inclu
 TOP_N       = 20     # show top-N schools by n_answered (set None to disable)
 ANNOTATE_GT = 10.0   # annotate cells >= this % with "xx%"
 
+# NEW: toggle for weighted coloring (color ∝ % × n/n_max)
+WEIGHT_BY_N = True
+
 PLOT_DPI       = 300
 BASE_FONTSIZE  = 12
 TITLE_FONTSIZE = 16
 TICK_FONTSIZE  = 11
 LABEL_FONTSIZE = 12
 
-TITLE   = "BookRollでよく使う機能（学校別・教員）"
-FOOTNOTE = "分母＝各学校でQ10に回答（1つ以上選択）した人数／ MIN_Nフィルタ適用"
+TITLE    = "BookRollでよく使う機能（学校別・教員）"
+FOOTNOTE = "色＝割合×人数の重み付け（各校の人数/最大人数）。文字ラベルは素の割合(%)。"
 
 # --- Color map ---------------------------------------------------------------
-# Option A: brand gradient (white -> TBICS blue)
 CMAP = LinearSegmentedColormap.from_list(
     "scarlet",
     [
@@ -59,10 +62,6 @@ CMAP = LinearSegmentedColormap.from_list(
         "#8b0000",  # deep red (near 100%)
     ]
 )
-# Option B: color-blind safe defaults (uncomment one)
-# CMAP = "viridis"
-# CMAP = "magma"
-# CMAP = "cividis"
 
 # Canonical feature set (column order for heatmap/CSV)
 FEATURES_CANON: List[str] = [
@@ -143,24 +142,34 @@ def _wrap_jp(s: str, width: int = 6) -> str:
     return "\n".join([s[i:i+width] for i in range(0, len(s), width)])
 
 # ---- Heatmap plotting --------------------------------------------------------
-def plot_heatmap(pct: pd.DataFrame, n_answered: pd.Series, out_png: Path):
+def plot_heatmap(pct: pd.DataFrame, n_answered: pd.Series, out_png: Path, weight_by_n: bool = True):
     rows = pct.index.tolist()
     cols = FEATURES_CANON
-    M = pct.reindex(columns=cols, fill_value=0.0).values
+
+    # Matrix for text labels = raw percentages (0..100)
+    M_pct = pct.reindex(columns=cols, fill_value=0.0).values
+
+    # Matrix for color = optionally weighted by n / n_max
+    if weight_by_n and len(n_answered) > 0:
+        weights = (n_answered / n_answered.max()).values[:, None]  # (R,1) in [0..1]
+        M_color = M_pct * weights
+        cbar_label = "重み付き割合(%)"
+    else:
+        M_color = M_pct
+        cbar_label = "割合(%)"
 
     fig_w = max(9.5, 0.65 * len(cols) + 2.5)
     fig_h = max(6.0, 0.46 * len(rows) + 2.6)
     fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=PLOT_DPI)
 
     im = ax.imshow(
-    M,
-    aspect="auto",
-    origin="upper",
-    vmin=0, vmax=100,
-    cmap=CMAP,
-    interpolation="bicubic",   # ← smooth gradients
+        M_color,
+        aspect="auto",
+        origin="upper",
+        vmin=0, vmax=100,
+        cmap=CMAP,
+        interpolation="bicubic",
     )
-
 
     # axis labels
     xlabels = [DISPLAY_ALIASES.get(c, c) for c in cols]
@@ -169,34 +178,37 @@ def plot_heatmap(pct: pd.DataFrame, n_answered: pd.Series, out_png: Path):
     ax.set_xticks(np.arange(len(cols)), labels=xlabels, fontsize=TICK_FONTSIZE)
     ax.set_yticks(np.arange(len(rows)), labels=ylabels, fontsize=TICK_FONTSIZE)
 
-    # --- keep only the outer frame; remove internal grid/lines ---
     ax.minorticks_off()
     ax.grid(False)
     for side in ["top", "right", "left", "bottom"]:
         ax.spines[side].set_visible(True)
         ax.spines[side].set_linewidth(1.1)
-        ax.spines[side].set_color((0, 0, 0, 0.35))  # soft grey
+        ax.spines[side].set_color((0, 0, 0, 0.35))
 
     # colorbar
     cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-    cbar.set_label("割合(%)", fontsize=LABEL_FONTSIZE)
+    cbar.set_label(cbar_label, fontsize=LABEL_FONTSIZE)
 
-    # annotations (avoid clutter with threshold)
+    # annotations show RAW % (not weighted)
     if ANNOTATE_GT is not None:
-        for i in range(M.shape[0]):
-            for j in range(M.shape[1]):
-                v = float(M[i, j])
+        for i in range(M_pct.shape[0]):
+            for j in range(M_pct.shape[1]):
+                v = float(M_pct[i, j])
                 if v >= ANNOTATE_GT:
-                    txt_color = "white" if v >= 60 else "black"
-                    ax.text(j, i, f"{v:.0f}%", ha="center", va="center",
-                            fontsize=BASE_FONTSIZE-1, color=txt_color,
-                            weight="bold" if v >= 80 else None)
+                    txt_color = "white" if (M_color[i, j] >= 60) else "black"
+                    ax.text(
+                        j, i, f"{v:.0f}%", ha="center", va="center",
+                        fontsize=BASE_FONTSIZE-1, color=txt_color,
+                        weight="bold" if v >= 80 else None
+                    )
 
     # title & footnote
     ax.set_title(TITLE, fontsize=TITLE_FONTSIZE, pad=10)
-    fig.text(0.01, -0.02,
-             "分母＝各学校でQ10に回答（1つ以上選択）した人数／ 小規模校も表示（n≥1）",
-             ha="left", va="top", fontsize=10)
+    if WEIGHT_BY_N:
+        fig.text(0.01, -0.02, FOOTNOTE, ha="left", va="top", fontsize=10)
+    else:
+        fig.text(0.01, -0.02, "分母＝各学校でQ10に回答（1つ以上選択）した人数／ 小規模校も表示（n≥1）",
+                 ha="left", va="top", fontsize=10)
 
     plt.tight_layout(rect=[0, 0.02, 1, 1])
     fig.patch.set_facecolor("white")
@@ -212,8 +224,7 @@ def main():
 
     # Load
     df = pd.read_csv(DATA_CLEAN, dtype=str)
-    df = df.replace({"": np.nan})
-    df = df.infer_objects(copy=False)
+    df = df.replace({"": np.nan}).infer_objects(copy=False)
 
     # Canonicalize school; split 中/高 if ambiguous
     school_col = SC.find_or_make_school_canon(df, debug=False)
@@ -237,6 +248,7 @@ def main():
 
     # Denominator per school
     n_by_school = df_ans.groupby("school_canon").size().sort_values(ascending=False).astype(int)
+
     # Apply MIN_N / TOP_N
     keep = n_by_school[n_by_school >= MIN_N]
     if TOP_N:
@@ -244,14 +256,15 @@ def main():
     keep_idx = keep.index
 
     df_ans = df_ans[df_ans["school_canon"].isin(keep_idx)]
-
     if df_ans.empty:
         raise RuntimeError("No schools passed MIN_N/TOP_N filters for Q10 heatmap.")
 
     # Long form: explode lists to one row per (school, feature)
     long = df_ans.explode("_feat_list").rename(columns={"_feat_list": "feature"})
+
     # Counts per (school, feature)
     ct = long.groupby(["school_canon", "feature"]).size().unstack(fill_value=0)
+
     # Ensure all canonical features as columns (ordered)
     for f in FEATURES_CANON:
         if f not in ct.columns:
@@ -261,7 +274,7 @@ def main():
     # Percentages within each school
     pct = (ct.divide(keep, axis=0) * 100.0).fillna(0.0).round(1)
 
-    # Sort rows by n_answered desc, then by マーカー desc
+    # Sort rows by n_answered desc, then by マーカー desc (arbitrary tie-breaker)
     order = (
         pd.DataFrame({"n": keep, "marker": pct.get("マーカー", pd.Series(0, index=pct.index))})
           .sort_values(["n", "marker"], ascending=[False, False])
@@ -276,8 +289,8 @@ def main():
     out.to_csv(OUT_CSV, encoding="utf-8")
     print(f"[info] wrote {OUT_CSV}")
 
-    # Plot heatmap
-    plot_heatmap(pct, keep, OUT_PNG)
+    # Plot heatmap (weighted color, raw % labels)
+    plot_heatmap(pct, keep, OUT_PNG, weight_by_n=WEIGHT_BY_N)
 
 if __name__ == "__main__":
     main()
