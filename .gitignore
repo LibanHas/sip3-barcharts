@@ -1,0 +1,10 @@
+
+# macOS
+.DS_Store
+
+# Office temp files
+~
+~.xlsx
+
+# Generated figures
+figs/
